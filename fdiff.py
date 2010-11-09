@@ -198,6 +198,14 @@ class FDiff(Fuse):
             myfile.truncate(len)
             setmodifiedfile("." + path,myfile)
             myfile.close()
+    
+    def unlink(self, path):
+        dper=shelve.open(datastore['a'],flag = 'w', writeback=True)
+        if dper.has_key("." + path):
+            del dper["." + path]
+        else:
+            os.unlink("." + path)
+        dper.close()
 
     def statfs(self):
         return os.statvfs(".")
