@@ -176,10 +176,13 @@ class FDiff(Fuse):
     def rename(self, path, path1):
         oldname="." + path
         newname="." + path1
+        #print oldname, newname
         if oldname == newname:
             return
-        #if  not os.path.exists(oldname):
-        #    return
+        if  not os.path.exists(oldname):
+            return
+        if os.path.exists(newname):
+            return
         dper=shelve.open(self.datastorage,flag = 'w', writeback=True)
         if dper.has_key(oldname):
             dper[newname]=dper[oldname]
@@ -200,7 +203,7 @@ class FDiff(Fuse):
             myfile.close()
     
     def unlink(self, path):
-        dper=shelve.open(datastore['a'],flag = 'w', writeback=True)
+        dper=shelve.open(self.datastorage,flag = 'w', writeback=True)
         if dper.has_key("." + path):
             del dper["." + path]
         else:
