@@ -154,9 +154,9 @@ class FDiff(Fuse):
         #print "." + path
         lspath="." + path
         #oldlist=os.listdir()
-        #print oldlist
         dper=shelve.open(self.datastorage,flag = 'r')
         oldlist=os.listdir(lspath)
+        #print oldlist
         for k,v in dper.iteritems():
             if path!='/':
                 newname=k.replace(lspath+'/','')
@@ -165,8 +165,9 @@ class FDiff(Fuse):
                 newname=k.replace(lspath,'')
                 oldname=v[2].replace(lspath,'')                
             #print newname,oldname
-            if oldname in oldlist and oldname!=newname:
+            if oldname.find('/') == -1:
                 oldlist.remove(oldname)
+            if newname.find('/') == -1:
                 oldlist.append(newname)
         dper.close()
         #print oldlist
@@ -179,10 +180,10 @@ class FDiff(Fuse):
         #print oldname, newname
         if oldname == newname:
             return
-        if  not os.path.exists(oldname):
-            return
-        if os.path.exists(newname):
-            return
+        #if  not os.path.exists(oldname):
+        #    return
+        #if os.path.exists(newname):
+        #    return
         dper=shelve.open(self.datastorage,flag = 'w', writeback=True)
         if dper.has_key(oldname):
             dper[newname]=dper[oldname]
@@ -219,7 +220,7 @@ class FDiff(Fuse):
         dper=shelve.open(self.datastorage,flag = 'c', writeback=True)
         dper.close()
         datastore['a']=self.datastorage
-        #print datastore
+        #print self.fuse_args.mountpoint
         os.chdir(self.root)
 
     class FDiffFile(object):
