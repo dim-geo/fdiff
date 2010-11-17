@@ -29,18 +29,45 @@ def objecttozip(data):
 def ziptoobject(zdata):
     return pickle.loads(zlib.decompress(zdata))
 
+def getoriginalname(name):
+    dper=shelve.open(datastore['a'],flag = 'r')
+    if dper.has_key(name):
+        return dper[name][2]
+    else:
+        return getoriginalpath(name)
+    dper.close()
+
+def getoriginalpath(path):
+    dper=shelve.open(datastore['a'],flag = 'r')
+    keylen=0 # slashes....
+    specialkey=''
+    for key in dper.keys():
+        if path.startswith(key):
+            if len(key) - len(key.translate(None,'/')) > keylen:
+                specialkey=key
+                keylen=len(key) - len(key.translate(None,'/'))
+    #print specialkey, keylen
+    if(specialkey!=''):
+        realpath=path.replace(specialkey,dper[specialkey][2])
+    else:
+        realpath=path
+    #print path, realpath
+    dper.close()
+    return realpath
+
 def getoriginalfile(path):
+    realpath=getoriginalpath(path)
     originalfile=StringIO.StringIO()
-    with open(path,'rb') as fl:
+    with open(realpath,'rb') as fl:
         originalfile.write(fl.read())
     originalfile.seek(0)
     return originalfile
 
 def getmodifiedfile(path):
     modifiedfile=StringIO.StringIO()
-    dpersistence=shelve.open(datastore['a'],flag = 'r')
-    if dpersistence.has_key(path):
-        zdiff,new_len,oldpath=dpersistence[path]
+    dper=shelve.open(datastore['a'],flag = 'r')
+    if dper.has_key(path):
+        zdiff,new_len,oldpath=dper[path]
         original_file=getoriginalfile(oldpath)
         original_data=original_file.read()
         original_file.close()
@@ -56,7 +83,7 @@ def getmodifiedfile(path):
         original_file.close()
         modifiedfile.write(original_data)
     modifiedfile.seek(0)
-    dpersistence.close()
+    dper.close()
     return modifiedfile
 
 def setmodifiedfile(path,newfile):
@@ -79,6 +106,7 @@ def setmodifiedfile(path,newfile):
             oldfile.close()
             savedoldpath=oldpath
         else:
+            savedoldpath=getoriginalpath(path)
             oldfile=getoriginalfile(path)
             olddata=oldfile.read()
             oldfile.close()
@@ -114,33 +142,26 @@ class FDiff(Fuse):
     def getattr(self, path):
         st=MyStat()
         name="." + path
+        realname=getoriginalname(name)
+        mdata = os.lstat(realname)
+        st.st_mode = mdata.st_mode
+        st.st_ino = mdata.st_ino
+        st.st_dev = mdata.st_dev
+        st.st_nlink = mdata.st_nlink
+        st.st_uid = mdata.st_uid
+        st.st_gid = mdata.st_gid
+        st.st_size = mdata.st_size
+        st.st_atime = mdata.st_atime
+        st.st_mtime = mdata.st_mtime
+        st.st_ctime = mdata.st_ctime
         #print name
         dper=shelve.open(self.datastorage,flag = 'r')
+        #for key in dper.keys():
+        #    print key, dper[key][2]
+        #print '\n'
         if dper.has_key(name):
             #print dper[name][2]
-            mdata=os.lstat(dper[name][2])
-            st.st_mode = mdata.st_mode
-            st.st_ino = mdata.st_ino
-            st.st_dev = mdata.st_dev
-            st.st_nlink = mdata.st_nlink
-            st.st_uid = mdata.st_uid
-            st.st_gid = mdata.st_gid
             st.st_size = dper[name][1]
-            st.st_atime = mdata.st_atime
-            st.st_mtime = mdata.st_mtime
-            st.st_ctime = mdata.st_ctime
-        else:
-            mdata = os.lstat(name)
-            st.st_mode = mdata.st_mode
-            st.st_ino = mdata.st_ino
-            st.st_dev = mdata.st_dev
-            st.st_nlink = mdata.st_nlink
-            st.st_uid = mdata.st_uid
-            st.st_gid = mdata.st_gid
-            st.st_size = mdata.st_size
-            st.st_atime = mdata.st_atime
-            st.st_mtime = mdata.st_mtime
-            st.st_ctime = mdata.st_ctime
         dper.close()
         if dfiles.has_key(name) and not dfiles[name].closed:
             pos=dfiles[name].tell()
@@ -153,17 +174,17 @@ class FDiff(Fuse):
     def readdir(self, path, offset):
         #print "." + path
         lspath="." + path
-        #oldlist=os.listdir()
-        dper=shelve.open(self.datastorage,flag = 'r')
-        oldlist=os.listdir(lspath)
+        reallspath=getoriginalpath(lspath)
+        oldlist=os.listdir(reallspath)
         #print oldlist
+        dper=shelve.open(self.datastorage,flag = 'r')
         for k,v in dper.iteritems():
             if path!='/':
                 newname=k.replace(lspath+'/','')
-                oldname=v[2].replace(lspath+'/','')
+                oldname=v[2].replace(reallspath+'/','')
             else:
                 newname=k.replace(lspath,'')
-                oldname=v[2].replace(lspath,'')                
+                oldname=v[2].replace(reallspath,'')                
             #print newname,oldname
             if oldname.find('/') == -1:
                 oldlist.remove(oldname)
@@ -171,6 +192,7 @@ class FDiff(Fuse):
                 oldlist.append(newname)
         dper.close()
         #print oldlist
+        print '\n'
         for e in oldlist:
             yield fuse.Direntry(e)
 
@@ -185,12 +207,25 @@ class FDiff(Fuse):
         #if os.path.exists(newname):
         #    return
         dper=shelve.open(self.datastorage,flag = 'w', writeback=True)
-        if dper.has_key(oldname):
-            dper[newname]=dper[oldname]
-            del dper[oldname]
-        else:
-            mdata=os.lstat(oldname)
-            dper[newname]='',mdata.st_size,oldname
+        for key in dper.keys():
+            if key.startswith(oldname):
+                newkey=key.replace(oldname,newname)
+                if len(newkey)==len(newname) or newkey[len(newname)]=='/':
+                    dper[newkey]=dper[key]
+                    del dper[key]
+                    print key
+        dper.close()
+        realoldname=getoriginalpath(oldname)
+        dper=shelve.open(self.datastorage,flag = 'w', writeback=True)
+        if not dper.has_key(newname):
+            mdata=os.lstat(realoldname)
+            dper[newname]='',mdata.st_size,realoldname
+        #if dper.has_key(oldname):
+        #    dper[newname]=dper[oldname]
+        #    del dper[oldname]
+        #else:
+        #    mdata=os.lstat(oldname)
+        #    dper[newname]='',mdata.st_size,oldname
         dper.close()
 
     def truncate(self, path, len):
@@ -207,8 +242,8 @@ class FDiff(Fuse):
         dper=shelve.open(self.datastorage,flag = 'w', writeback=True)
         if dper.has_key("." + path):
             del dper["." + path]
-        else:
-            os.unlink("." + path)
+        #else:
+        #    os.unlink("." + path)
         dper.close()
 
     def statfs(self):
@@ -252,32 +287,21 @@ class FDiff(Fuse):
 
         def fgetattr(self):
             st=MyStat()
+            realname=getoriginalname(self.nam)
+            mdata = os.stat(realname)
+            st.st_mode = mdata.st_mode
+            st.st_ino = mdata.st_ino
+            st.st_dev = mdata.st_dev
+            st.st_nlink = mdata.st_nlink
+            st.st_uid = mdata.st_uid
+            st.st_gid = mdata.st_gid
+            st.st_size = mdata.st_size
+            st.st_atime = mdata.st_atime
+            st.st_mtime = mdata.st_mtime
+            st.st_ctime = mdata.st_ctime
             dper=shelve.open(datastore['a'],flag = 'r')
             if dper.has_key(self.nam):
-            #print dper[name][2]
-                mdata=os.stat(dper[self.nam][2])
-                st.st_mode = mdata.st_mode
-                st.st_ino = mdata.st_ino
-                st.st_dev = mdata.st_dev
-                st.st_nlink = mdata.st_nlink
-                st.st_uid = mdata.st_uid
-                st.st_gid = mdata.st_gid
                 st.st_size = dper[self.nam][1]
-                st.st_atime = mdata.st_atime
-                st.st_mtime = mdata.st_mtime
-                st.st_ctime = mdata.st_ctime
-            else:
-                mdata = os.stat(self.nam)
-                st.st_mode = mdata.st_mode
-                st.st_ino = mdata.st_ino
-                st.st_dev = mdata.st_dev
-                st.st_nlink = mdata.st_nlink
-                st.st_uid = mdata.st_uid
-                st.st_gid = mdata.st_gid
-                st.st_size = mdata.st_size
-                st.st_atime = mdata.st_atime
-                st.st_mtime = mdata.st_mtime
-                st.st_ctime = mdata.st_ctime
             dper.close()
             pos=self.file.tell()
             self.file.seek(0)
